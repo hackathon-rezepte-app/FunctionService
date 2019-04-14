@@ -14,11 +14,13 @@ Set the following application settings variables:
 * "CustomVisionIterationName"
 * "CustomVisionPredictionKey"
 * "CustomVisionTrainingKey"
+* "saveImageInBlob" as "true" or "false"
+* "saveImageInCustomVisionService" as "true" or "false"
 
 ## How it works
 
 When you call the function, be sure you checkout which security rules you apply. If you're using an apikey, you'll need to include that in your request.
 
-Send with your post request an image. This filestream will be uploaded to a blob storage, which generates a corresponding url.
+Send with your post request an image. This filestream will be optionally uploaded to a blob storage, which generates a corresponding url.
 
-After that, the custom vision service gets triggered with the generated url and returns detected objects. These will be collected and resend as the HTTP response.
+After that, the custom vision service gets triggered with the generated url or the filestream and returns detected objects. These will be collected and resend as the HTTP response.

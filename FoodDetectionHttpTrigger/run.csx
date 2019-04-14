@@ -13,46 +13,49 @@ using Microsoft.Azure.CognitiveServices.Vision.CustomVision.Prediction;
 using Microsoft.Azure.CognitiveServices.Vision.CustomVision.Prediction.Models;
 using Microsoft.Azure.CognitiveServices.Vision.CustomVision.Training;
 
-public static async Task<IActionResult> Run(HttpRequestMessage req, TraceWriter log)
+public static async Task<IActionResult> Run(HttpRequestMessage req, ILogger log)
 {
-    HttpStatusCode result;
     string contentType;
     double threshold = 0.0;
     List<PredictionItem> predictionItems = new List<PredictionItem>();
+    string base_url = "https://fooddetectionfubd10.blob.core.windows.net/images/";
+    string envSaveImageInBlob = Environment.GetEnvironmentVariable("saveImageInBlob",EnvironmentVariableTarget.Process);
+    bool saveImageInBlob = envSaveImageInBlob == "true";
 
-    result = HttpStatusCode.BadRequest;
     contentType = req.Content.Headers?.ContentType?.MediaType;
 
     var queryVals = req.RequestUri.ParseQueryString();
     var message = queryVals["threshold"];
     threshold = (message != null) ? Convert.ToDouble(message) : 0.6;
-    log.Info($"{threshold}");
+    log.LogInformation($"{threshold}");
     bool isOctetStream = contentType == "application/octet-stream" ? true:true;
     if(isOctetStream)
     {
-        Stream body;
-        body = await req.Content.ReadAsStreamAsync();
-
-        string name;
-
-        name = Guid.NewGuid().ToString("n");
-
-        bool sucess = await CreateBlob(name + ".jpg", body, log);
-        string base_url = "https://fooddetectionfubd10.blob.core.windows.net/images/";
-        predictionItems = await DetectObjectsFromUrl(base_url + name + ".jpg", threshold);
-
-        result = HttpStatusCode.OK;
+        Stream bodyStream = await req.Content.ReadAsStreamAsync();
+        
+        if(saveImageInBlob)
+        {
+            string name = Guid.NewGuid().ToString("n");
+            bool sucess = await CreateBlob(name + ".jpg", bodyStream, log);
+            predictionItems = await DetectObjects(new ImageUrl(base_url + name + ".jpg"), log, threshold);
+        }
+        else
+        {
+            predictionItems = await DetectObjects(bodyStream, log, threshold);
+        }
     }
     return new ObjectResult(predictionItems);
 }
 
-private async static Task<List<PredictionItem>> DetectObjectsFromUrl(string url, double threshold = 0.0)
+private async static Task<List<PredictionItem>> DetectObjects(object source, ILogger log, double threshold = 0.0)
 {
     string endpointurl = Environment.GetEnvironmentVariable("CustomVisionEndpointWestEuropeUrl",EnvironmentVariableTarget.Process);
     string iterationName = Environment.GetEnvironmentVariable("CustomVisionIterationName",EnvironmentVariableTarget.Process);
     string predictionKey = Environment.GetEnvironmentVariable("CustomVisionPredictionKey",EnvironmentVariableTarget.Process);
     string trainingKey = Environment.GetEnvironmentVariable("CustomVisionTrainingKey",EnvironmentVariableTarget.Process);
     string projectName = Environment.GetEnvironmentVariable("CustomVisionProjectName",EnvironmentVariableTarget.Process);
+    string envSaveImageInCustomVisionService = Environment.GetEnvironmentVariable("saveImageInCustomVisionService",EnvironmentVariableTarget.Process);
+    bool saveImageInCustomVisionService = envSaveImageInCustomVisionService == "true";
     CustomVisionTrainingClient trainingApi = new CustomVisionTrainingClient()
     {
         ApiKey = trainingKey,
@@ -84,26 +87,40 @@ private async static Task<List<PredictionItem>> DetectObjectsFromUrl(string url,
     }
     //if(iterationItem == null) {return;}
     List<PredictionItem> predictionItems = new List<PredictionItem>();
-    Console.WriteLine($"Making a prediction:{project.Name}");
-    {
-        ImagePrediction result = endpoint.DetectImageUrl(project.Id, iterationItem.PublishName, new ImageUrl(url));
+    ImagePrediction result;
 
-        // Loop over each prediction and write out the results
-        foreach (var c in result.Predictions)
-        {
-            if(c.Probability < threshold) { continue; }
-            PredictionItem predictionItem = new PredictionItem{
-                TagName = c.TagName,
-                Propability = c.Probability,
-                BoundingBox = new BoundingBox{
-                    Top = c.BoundingBox.Top,
-                    Left = c.BoundingBox.Left,
-                    Width = c.BoundingBox.Width,
-                    Height = c.BoundingBox.Height
-                }
-            };
-            predictionItems.Add(predictionItem);
-        }
+    if(typeof(Stream).IsAssignableFrom(source.GetType()))
+    {
+        if(saveImageInCustomVisionService)
+            result = endpoint.DetectImage(project.Id, iterationItem.PublishName, (Stream)source);
+        else 
+            result = endpoint.DetectImageWithNoStore(project.Id, iterationItem.PublishName, (Stream)source);
+    }
+    else if(typeof(ImageUrl).Equals(source.GetType()))
+    {
+        if(saveImageInCustomVisionService)
+            result = endpoint.DetectImageUrl(project.Id, iterationItem.PublishName, (ImageUrl)source);
+        else
+            result = endpoint.DetectImageUrlWithNoStore(project.Id, iterationItem.PublishName, (ImageUrl)source);
+    }
+    else
+        throw new InvalidDataException();
+
+    // Loop over each prediction and write out the results
+    foreach (var c in result.Predictions)
+    {
+        if(c.Probability < threshold) { continue; }
+        PredictionItem predictionItem = new PredictionItem{
+            TagName = c.TagName,
+            Propability = c.Probability,
+            BoundingBox = new BoundingBox{
+                Top = c.BoundingBox.Top,
+                Left = c.BoundingBox.Left,
+                Width = c.BoundingBox.Width,
+                Height = c.BoundingBox.Height
+            }
+        };
+        predictionItems.Add(predictionItem);
     }
     return predictionItems;
 }
@@ -123,10 +140,8 @@ internal class BoundingBox
     internal double Height{get;set;}
 }
 
-private async static Task<bool> CreateBlob(string name, Stream stream, TraceWriter log)
+private async static Task<bool> CreateBlob(string name, Stream stream, ILogger log)
 {
-    string accessKey;
-    string accountName;
     string connectionString;
     CloudStorageAccount storageAccount;
     CloudBlobClient client;
