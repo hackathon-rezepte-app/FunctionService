@@ -1,0 +1,10 @@
+{
+    "frameworks": {
+      "net46":{
+        "dependencies": {
+          "Microsoft.Azure.CognitiveServices.Vision.CustomVision.Training": "1.0.0",
+          "Microsoft.Azure.CognitiveServices.Vision.CustomVision.Prediction": "1.0.0"
+        }
+      }
+     }
+  }
